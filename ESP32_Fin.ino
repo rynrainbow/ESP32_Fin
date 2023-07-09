@@ -1,9 +1,9 @@
 #include <WiFi.h>
-#include <WiFiMulti.h>
 #include <driver/i2s.h>
 #include <soc/syscon_struct.h>
+#include "info.h"
 
-// #define DEBUG
+#define DEBUG
 
 // I2S
 #define I2S_SAMPLE_RATE (8000) // Max sampling frequency = 277.777 kHz
@@ -11,16 +11,15 @@
 #define I2S_DMA_BUF_LEN (512)
 
 // timeStamp for recording time elapsed
-uint16_t timeStamp;
 #define TIMEOUT (20000)
+uint32_t initTime;
+uint32_t timeStamp;
 
 // Use WiFiClient class to create TCP connections
-WiFiMulti WiFiMulti;
 WiFiClient client;
-char ssid[] = "X508";  // "" SHAW-C18FD0  X508  OnePlus 9 Pro
-char pwd[] = "Xlabrouter508";  // "" 25116A077922  Xlabrouter508 lb123456
-const char * host = "192.168.0.162"; // laptop's ip. 192.168.0.21
+const char * host = "192.168.0.162"; 
 const uint16_t port = 2333;  // the port for service
+WIFIinfo mWifi;
 
 // i2s Initialization
 // Using dual channel format since it does not have swapping behavior
@@ -73,14 +72,17 @@ void i2sInit(){
 }
 
 //WIFI initialization
-void wifiAPInit(){
+void wifiInit(){
   // We start by connecting to a WiFi network
-  WiFiMulti.addAP(ssid, pwd);  // this is slow -> in need of scanning
+  WiFi.mode(WIFI_STA);
+  WiFi.config(*mWifi.local_IP, *mWifi.gateway, *mWifi.subnet);
+  WiFi.begin(mWifi.ssid, mWifi.pwd, mWifi.channel, mWifi.bssid, true);
+
   #ifdef DEBUG
   Serial.print("Waiting for WiFi... ");
   #endif  
 
-  while(WiFiMulti.run() != WL_CONNECTED) {
+  while(WiFi.status() != WL_CONNECTED) {
       #ifdef DEBUG
       Serial.print(".");
       #endif
@@ -123,41 +125,39 @@ void setup()
   #ifdef DEBUG
   Serial.begin(115200);
   delay(10);
-  #endif
-  
-  // init I2S and ADC  
-  i2sInit();
-  // setup wakeup
-  esp_sleep_enable_ext0_wakeup(GPIO_NUM_33, 1); //1 = High, 0 = Low
-  
   // for debugging
   pinMode(13, OUTPUT);
   digitalWrite(13, HIGH);
   delay(500);
   digitalWrite(13, LOW);
   delay(500);
-  // join the network, very slow!!
-  wifiAPInit();
+   #endif
+  
+  initTime = millis();
+  // init I2S and ADC  
+  i2sInit();
+  // setup wakeup
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_33, 1); //1 = High, 0 = Low
+  // fast join the network with hardcoded information!!
+  wifiInit();
+
+  #ifdef DEBUG
+  Serial.println("time needed for joining network: "); 
+  Serial.println(millis()-initTime);
+  #endif 
+
   timeStamp = millis();
 }
 
 
 void loop()
 {
-  // for debugging
-  // digitalWrite(13, HIGH);
-  // delay(100);
-  // digitalWrite(13, LOW);
-  // delay(100);
-  // work for some time then go to sleep
+  // // work for some time then go to sleep
   if(millis() - timeStamp < TIMEOUT) {
     size_t bytes_read;
     uint16_t buffer[I2S_DMA_BUF_LEN] = {0};
 
     i2s_read(I2S_NUM_0, &buffer, sizeof(buffer), &bytes_read, 15);
-    // #ifdef DEBUG
-    // Serial.println(bytes_read);
-    // #endif
     
     wifiHostReconnect();
     uint8_t alt_buffer[bytes_read / 2] = {0};  // 2 repeatitions
@@ -172,6 +172,9 @@ void loop()
     // if input detected then refresh timeStamp
   }
   else{
+    #ifdef DEBUG
+    Serial.println("disconnecting..");
+    #endif
     client.stop();
     delay(50);
     esp_deep_sleep_start();
