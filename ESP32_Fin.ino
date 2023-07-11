@@ -79,13 +79,10 @@ void wifiInit(){
   WiFi.begin(mWifi.ssid, mWifi.pwd, mWifi.channel, mWifi.bssid, true);
 
   #ifdef DEBUG
-  Serial.print("Waiting for WiFi... ");
+  Serial.println("Waiting for WiFi... ");
   #endif  
 
   while(WiFi.status() != WL_CONNECTED) {
-      #ifdef DEBUG
-      Serial.print(".");
-      #endif
       delay(50);
   }
 
@@ -159,7 +156,7 @@ void loop()
 
     i2s_read(I2S_NUM_0, &buffer, sizeof(buffer), &bytes_read, 15);
     
-    wifiHostReconnect();
+    // wifiHostReconnect();
     uint8_t alt_buffer[bytes_read / 2] = {0};  // 2 repeatitions
     for(int i = 0; i < bytes_read / 2; i=i+2){
       // alter bytes
