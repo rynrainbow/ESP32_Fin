@@ -11,7 +11,7 @@
 #define I2S_DMA_BUF_LEN (512)
 
 // timeStamp for recording time elapsed
-#define TIMEOUT (20000)
+#define TIMEOUT (10000)
 uint32_t initTime;
 uint32_t timeStamp;
 
@@ -20,6 +20,7 @@ WiFiClient client;
 const char * host = "192.168.0.162"; 
 const uint16_t port = 2333;  // the port for service
 WIFIinfo mWifi;
+TaskHandle_t wifiHandler;
 
 // i2s Initialization
 // Using dual channel format since it does not have swapping behavior
@@ -71,35 +72,40 @@ void i2sInit(){
   #endif
 }
 
-//WIFI initialization
+//network initialization
 void wifiInit(){
   // We start by connecting to a WiFi network
-  WiFi.mode(WIFI_STA);
-  WiFi.config(*mWifi.local_IP, *mWifi.gateway, *mWifi.subnet);
-  WiFi.begin(mWifi.ssid, mWifi.pwd, mWifi.channel, mWifi.bssid, true);
+  while(WiFi.status() != WL_CONNECTED){
+    WiFi.mode(WIFI_STA);
+    WiFi.config(*mWifi.local_IP, *mWifi.gateway, *mWifi.subnet);
+    WiFi.begin(mWifi.ssid, mWifi.pwd, mWifi.channel, mWifi.bssid, true);
 
-  #ifdef DEBUG
-  Serial.print("Waiting for WiFi... ");
-  #endif  
+    #ifdef DEBUG
+    Serial.println("Waiting for WiFi... ");
+    #endif  
 
-  while(WiFi.status() != WL_CONNECTED) {
-      #ifdef DEBUG
-      Serial.print(".");
-      #endif
-      delay(50);
+    uint32_t timeout = millis() + 500;
+    while(WiFi.status() != WL_CONNECTED && millis() < timeout) {
+        delay(10);
+    }
+
+    #ifdef DEBUG
+    if(WiFi.status() == WL_CONNECTED){
+      Serial.println("");
+      Serial.println("WiFi connected");
+      Serial.println("IP address: ");
+      Serial.println(WiFi.localIP());  // DHCP is also slow -> pick a static IP
+    }
+    else{
+      Serial.println("Join network failed, restarting...");
+    }
+    #endif
   }
-
-  #ifdef DEBUG
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());  // DHCP is also slow -> pick a static IP
-  #endif
 }
-// check connection status
+// check host connection status
 // if not, attempt to reconnect
 void wifiHostReconnect(){
-  if(!client.connected()){
+  if(!client.connected() && WiFi.status() == WL_CONNECTED){
     // then we try to connect with our host
     // using TCP connections
     #ifdef DEBUG
@@ -109,49 +115,55 @@ void wifiHostReconnect(){
 
     while(!client.connect(host, port)) {
         #ifdef DEBUG
-        Serial.println("Connection failed.");
-        Serial.println("Waiting 3 secs before retrying...");
+        Serial.println("Connecting to host failed.");
+        Serial.println("Waiting 1 sec before retrying...");
         #endif
-        delay(3000);
+        delay(1000);
     }
     #ifdef DEBUG
     Serial.println("connected!");
     #endif
   }
 }
+// code for core 0 to run
+void codeForCore0(void * parameter)
+{
+  initTime = millis();
+  wifiInit();
+  #ifdef DEBUG
+  Serial.println("time needed for joining network: "); 
+  Serial.println(millis()-initTime);
+  #endif 
+  wifiHostReconnect();
+}
 
 void setup()
 {
+  WiFi.setAutoConnect(false); // prevent early autoconnect
   #ifdef DEBUG
   Serial.begin(115200);
-  delay(10);
+  delay(100);
   // for debugging
   pinMode(13, OUTPUT);
   digitalWrite(13, HIGH);
   delay(500);
   digitalWrite(13, LOW);
   delay(500);
-   #endif
-  
-  initTime = millis();
+  #endif
   // init I2S and ADC  
   i2sInit();
   // setup wakeup
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_33, 1); //1 = High, 0 = Low
   // fast join the network with hardcoded information!!
   wifiInit();
-
-  #ifdef DEBUG
-  Serial.println("time needed for joining network: "); 
-  Serial.println(millis()-initTime);
-  #endif 
-
+  // kickout a thread for wifi init!
+  // xTaskCreatePinnedToCore(codeForCore0, "Wifi_init", 5000, NULL, 2,  &wifiHandler, 0);  
   timeStamp = millis();
 }
 
 
 void loop()
-{
+{  
   // // work for some time then go to sleep
   if(millis() - timeStamp < TIMEOUT) {
     size_t bytes_read;
@@ -159,14 +171,18 @@ void loop()
 
     i2s_read(I2S_NUM_0, &buffer, sizeof(buffer), &bytes_read, 15);
     
-    wifiHostReconnect();
+    // wifiHostReconnect();
     uint8_t alt_buffer[bytes_read / 2] = {0};  // 2 repeatitions
     for(int i = 0; i < bytes_read / 2; i=i+2){
       // alter bytes
       alt_buffer[i] = (buffer[i] >> 8) & 0x0f;  // first 4 bits not making sense
       alt_buffer[i + 1] = buffer[i] & 0xff;
     } // for
-    client.write(alt_buffer, bytes_read / 2);
+    if(client.connected())
+      client.write(alt_buffer, bytes_read / 2);
+    // else
+      // kick out wifi init again
+      // xTaskCreatePinnedToCore(codeForCore0, "Wifi_init", 5000, NULL, 2,  &wifiHandler, 0);
 
     // TODOs: input detection
     // if input detected then refresh timeStamp
