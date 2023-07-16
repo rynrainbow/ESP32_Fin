@@ -1,4 +1,5 @@
 #include <WiFi.h>
+#include <vector>
 
 class WIFIinfo{
   public:
@@ -13,3 +14,6 @@ class WIFIinfo{
     WIFIinfo() : local_IP(new IPAddress(192, 168, 0, 114)), gateway(new IPAddress(192, 168, 0, 1)), 
     subnet(new IPAddress(255, 255, 255, 0)), channel(4) {}
 };
+
+void append2vector(uint8_t*, size_t, std::vector<uint8_t>*);
+void vector2array(uint8_t*, size_t*, std::vector<uint8_t>*);
