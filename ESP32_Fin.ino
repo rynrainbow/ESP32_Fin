@@ -3,6 +3,7 @@
 #include <soc/syscon_struct.h>
 #include "util.h"
 #include <vector>
+#include <mutex>
 using namespace std;
 
 // #define DEBUG
@@ -27,6 +28,7 @@ TaskHandle_t wifiHandler;
 // buffering data before wifi initiated
 vector<uint8_t>* growBuffer;
 bool bufferFailed = false;
+mutex mLock;
 
 // i2s Initialization
 // Using dual channel format since it does not have swapping behavior
@@ -118,16 +120,19 @@ void wifiHostReconnect(){
     Serial.println(host);
     #endif
 
-    while(!client.connect(host, port)) {
-        #ifdef DEBUG
-        Serial.println("Connecting to host failed.");
-        Serial.println("Waiting 1 sec before retrying...");
-        #endif
-        delay(1000);
-    }
+    mLock.lock();
+    bool status = client.connect(host, port);
     #ifdef DEBUG
-    Serial.println("connected!");
+    if(status)
+      Serial.println("connected!");
+    else{
+      Serial.println("Connecting to host failed.");
+      Serial.println("Waiting before retrying...");
+    }
     #endif
+    mLock.unlock();
+
+    delay(500);
   }
 }
 // code for core 0 to run
@@ -208,12 +213,14 @@ void loop()
     // we detect on host, here only receive sleep cmd
   }
   else{
+    mLock.lock();
     #ifdef DEBUG
     Serial.println("disconnecting..");
     #endif
     client.stop();
     delay(100);
     esp_deep_sleep_start();
+    mLock.unlock();
   }
 }
 
