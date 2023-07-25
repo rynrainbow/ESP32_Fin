@@ -6,7 +6,7 @@
 #include <mutex>
 using namespace std;
 
-// #define DEBUG
+#define DEBUG
 
 // I2S
 #define I2S_SAMPLE_RATE (8000) // Max sampling frequency = 277.777 kHz
@@ -14,9 +14,11 @@ using namespace std;
 #define I2S_DMA_BUF_LEN (512)
 #define MAX_WAIT_BUF_LEN (24000)  // Max wait time 1.5s for wifi to connect
 
+// sleep logic
+#define SLEEP_SIGNAL ("sleep")
 // timeStamp for recording time elapsed
-#define TIMEOUT (10000)
-uint32_t timeStamp;
+// #define TIMEOUT (20000)
+// uint32_t timeStamp;
 
 // Use WiFiClient class to create TCP connections
 WiFiClient client;
@@ -114,14 +116,15 @@ void wifiInit(){
 // if not, attempt to reconnect
 void wifiHostReconnect(){
   if(!client.connected() && WiFi.status() == WL_CONNECTED){
+    mLock.lock();
     // then we try to connect with our host
     #ifdef DEBUG
     Serial.print("Connecting to ");
     Serial.println(host);
     #endif
-
-    mLock.lock();
+    
     bool status = client.connect(host, port);
+
     #ifdef DEBUG
     if(status)
       Serial.println("connected!");
@@ -162,7 +165,7 @@ void setup()
   // tskIDLE_PRIORITY=0, idle task won't trigger watchdog
   xTaskCreatePinnedToCore(codeForCore0, "Wifi_init", 5000, NULL, tskIDLE_PRIORITY,  &wifiHandler, 0);
   growBuffer = new vector<uint8_t>();
-  timeStamp = millis();
+  // timeStamp = millis();
 
   #ifdef DEBUG
   Serial.println("entering loop!");
@@ -172,55 +175,73 @@ void setup()
 
 void loop()
 {  
-  // // work for some time then go to sleep
-  if(millis() - timeStamp < TIMEOUT) {
-    size_t bytes_read;
-    uint16_t buffer[I2S_DMA_BUF_LEN] = {0};
+  size_t bytes_read;
+  uint16_t buffer[I2S_DMA_BUF_LEN] = {0};
 
-    i2s_read(I2S_NUM_0, &buffer, sizeof(buffer), &bytes_read, 15);
-    
-    // wifiHostReconnect();
-    uint8_t alt_buffer[bytes_read / 2] = {0};  // 2 repeatitions
-    for(int i = 0; i < bytes_read / 2; i=i+2){
-      // alter bytes
-      alt_buffer[i] = (buffer[i] >> 8) & 0x0f;  // first 4 bits not making sense
-      alt_buffer[i + 1] = buffer[i] & 0xff;
-    }
+  i2s_read(I2S_NUM_0, &buffer, sizeof(buffer), &bytes_read, 15);
+  
+  // wifiHostReconnect();
+  uint8_t alt_buffer[bytes_read / 2] = {0};  // 2 repeatitions
+  for(int i = 0; i < bytes_read / 2; i=i+2){
+    // alter bytes
+    alt_buffer[i] = (buffer[i] >> 8) & 0x0f;  // first 4 bits not making sense
+    alt_buffer[i + 1] = buffer[i] & 0xff;
+  }
 
-    if(client.connected()){
-      if(growBuffer->size() > 0){
-        // vector to uint8_t array
-        uint8_t* waitBuffer = new uint8_t[MAX_WAIT_BUF_LEN];
-        size_t waitSize;
-        vector2array(waitBuffer, &waitSize, growBuffer);
-        growBuffer->clear();
-        client.write(waitBuffer, waitSize);
-        free(waitBuffer);
-      }
-      client.write(alt_buffer, bytes_read / 2);
+  if(client.connected()){
+    if(growBuffer->size() > 0){
+      // vector to uint8_t array
+      uint8_t* waitBuffer = new uint8_t[MAX_WAIT_BUF_LEN];
+      size_t waitSize;
+      vector2array(waitBuffer, &waitSize, growBuffer);
+      growBuffer->clear();
+      client.write(waitBuffer, waitSize);
+      free(waitBuffer);
     }
-    else{
-      // buffering data in vector when data does not exceed the limit
-      if(!bufferFailed) append2vector(alt_buffer, sizeof(alt_buffer), growBuffer);
-      if(growBuffer->size() > MAX_WAIT_BUF_LEN){
-        Serial.println("data buffering timeout!");
-        growBuffer->clear();
-        bufferFailed = true;
-      }
-    }
+    client.write(alt_buffer, bytes_read / 2);
 
-    // TODOs: input detection
-    // we detect on host, here only receive sleep cmd
+    // check sleep signal
+    if(client.available() > 0){
+      String recvd = client.readStringUntil('.');
+      #ifdef DEBUG
+      Serial.print("we recvd signal: ");
+      Serial.println(recvd);
+      #endif
+      if(recvd == SLEEP_SIGNAL){
+        mLock.lock();
+        #ifdef DEBUG
+        Serial.println("disconnecting..");
+        #endif
+        client.stop();
+        delay(200);  // how long is good enough? previously 100 ms
+        esp_deep_sleep_start();
+        mLock.unlock();
+      }      
+    }
   }
   else{
-    mLock.lock();
-    #ifdef DEBUG
-    Serial.println("disconnecting..");
-    #endif
-    client.stop();
-    delay(100);
-    esp_deep_sleep_start();
-    mLock.unlock();
+    // buffering data in vector when data does not exceed the limit
+    if(!bufferFailed) append2vector(alt_buffer, sizeof(alt_buffer), growBuffer);
+    if(growBuffer->size() > MAX_WAIT_BUF_LEN){
+      Serial.println("data buffering timeout!");
+      growBuffer->clear();
+      bufferFailed = true;
+    }
   }
 }
+
+// work for some time then go to sleep
+// if(millis() - timeStamp < TIMEOUT) {
+// ...
+// }
+// else{
+//   mLock.lock();
+//   #ifdef DEBUG
+//   Serial.println("disconnecting..");
+//   #endif
+//   client.stop();
+//   delay(100);
+//   esp_deep_sleep_start();
+//   mLock.unlock();
+// }
 
