@@ -6,13 +6,13 @@
 #include <mutex>
 using namespace std;
 
-#define DEBUG
+// #define DEBUG
 
 // I2S
 #define I2S_SAMPLE_RATE (8000) // Max sampling frequency = 277.777 kHz
 #define ADC_INPUT (ADC1_CHANNEL_4) //pin 32s
 #define I2S_DMA_BUF_LEN (512)
-#define MAX_WAIT_BUF_LEN (24000)  // Max wait time 1.5s for wifi to connect
+#define MAX_WAIT_BUF_LEN (32000)  // Max wait time 2s for wifi to connect
 
 // sleep logic
 #define SLEEP_SIGNAL ("sleep")
@@ -154,7 +154,7 @@ void setup()
 {
   #ifdef DEBUG
   Serial.begin(115200);
-  delay(100);
+  // delay(100);
   #endif
   
   // init I2S and ADC  
@@ -165,8 +165,9 @@ void setup()
   // tskIDLE_PRIORITY=0, idle task won't trigger watchdog
   xTaskCreatePinnedToCore(codeForCore0, "Wifi_init", 5000, NULL, tskIDLE_PRIORITY,  &wifiHandler, 0);
   growBuffer = new vector<uint8_t>();
+  delay(100);  // get rid of the 1st wakeup gest  
+  
   // timeStamp = millis();
-
   #ifdef DEBUG
   Serial.println("entering loop!");
   #endif
@@ -213,7 +214,7 @@ void loop()
         Serial.println("disconnecting..");
         #endif
         client.stop();
-        delay(200);  // how long is good enough? previously 100 ms
+        delay(100);  // how long is good enough? previously 100 ms
         esp_deep_sleep_start();
         mLock.unlock();
       }      
