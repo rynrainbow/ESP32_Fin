@@ -156,6 +156,7 @@ void setup()
   Serial.begin(115200);
   // delay(100);
   #endif
+  delay(100);  // get rid of the 1st wakeup gest  
   
   // init I2S and ADC  
   i2sInit();
@@ -165,7 +166,6 @@ void setup()
   // tskIDLE_PRIORITY=0, idle task won't trigger watchdog
   xTaskCreatePinnedToCore(codeForCore0, "Wifi_init", 5000, NULL, tskIDLE_PRIORITY,  &wifiHandler, 0);
   growBuffer = new vector<uint8_t>();
-  delay(100);  // get rid of the 1st wakeup gest  
   
   // timeStamp = millis();
   #ifdef DEBUG
@@ -214,6 +214,7 @@ void loop()
         Serial.println("disconnecting..");
         #endif
         client.stop();
+        WiFi.disconnect();
         delay(100);  // how long is good enough? previously 100 ms
         esp_deep_sleep_start();
         mLock.unlock();
